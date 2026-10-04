@@ -23,10 +23,13 @@ import (
 const errThreshold = 3
 
 type Conn struct {
-	conn   net.Conn
-	text   *textproto.Conn
-	server *Server
-	helo   string
+	// HookData retains hook-owned metadata for the current command.
+	HookData interface{}
+	conn     net.Conn
+	text     *textproto.Conn
+	server   *Server
+	helo     string
+	command  string
 
 	// Number of errors witnessed on this connection
 	errCount int
@@ -106,6 +109,15 @@ func (c *Conn) handle(cmd string, arg string) {
 	}
 
 	cmd = strings.ToUpper(cmd)
+	c.command = cmd
+	if c.server.CommandHook != nil && c.server.CommandHook(c, cmd, arg) {
+		// BDAT payload may already be pipelined. Closing avoids interpreting it
+		// as commands after an injected rejection.
+		if cmd == "BDAT" {
+			c.Close()
+		}
+		return
+	}
 	switch cmd {
 	case "SEND", "SOML", "SAML", "EXPN", "HELP", "TURN":
 		// These commands are not implemented in any state
@@ -984,10 +996,10 @@ func (c *Conn) handleData(arg string) {
 	}
 
 	r := newDataReader(c)
-	code, enhancedCode, msg := dataErrorToStatus(c.Session().Data(r))
+	err := c.Session().Data(r)
 	r.limited = false
 	io.Copy(ioutil.Discard, r) // Make sure all the data has been consumed
-	c.writeResponse(code, enhancedCode, msg)
+	c.writeDataError(err)
 }
 
 func (c *Conn) handleBdat(arg string) {
@@ -1081,7 +1093,7 @@ func (c *Conn) handleBdat(arg string) {
 		// the whole chunk.
 		io.Copy(ioutil.Discard, chunk)
 
-		c.writeResponse(dataErrorToStatus(err))
+		c.writeDataError(err)
 
 		if err == errPanic {
 			c.Close()
@@ -1108,7 +1120,7 @@ func (c *Conn) handleBdat(arg string) {
 				c.writeResponse(code, enchCode, "<"+rcpt+"> "+msg)
 			}
 		} else {
-			c.writeResponse(dataErrorToStatus(err))
+			c.writeDataError(err)
 		}
 
 		if err == errPanic {
@@ -1280,6 +1292,28 @@ func (c *Conn) greet() {
 }
 
 func (c *Conn) writeResponse(code int, enhCode EnhancedCode, text ...string) {
+	reply := &Reply{Code: code, EnhancedCode: enhCode, Lines: text}
+	if c.server.ResponseHook != nil {
+		reply = c.server.ResponseHook(c, reply)
+	}
+	if reply != nil {
+		c.WriteReply(reply)
+	}
+}
+
+// Reply is a complete SMTP response before wire encoding.
+type Reply struct {
+	Code         int
+	EnhancedCode EnhancedCode
+	Lines        []string
+}
+
+// Command is the command currently being handled, or CONNECT for the greeting.
+func (c *Conn) Command() string { return c.command }
+
+// WriteReply writes a reply without invoking ResponseHook again.
+func (c *Conn) WriteReply(reply *Reply) {
+	code, enhCode, text := reply.Code, reply.EnhancedCode, reply.Lines
 	// TODO: error handling
 	if c.server.WriteTimeout != 0 {
 		c.conn.SetWriteDeadline(time.Now().Add(c.server.WriteTimeout))
@@ -1312,11 +1346,21 @@ func (c *Conn) writeResponse(code int, enhCode EnhancedCode, text ...string) {
 }
 
 func (c *Conn) writeError(code int, enhCode EnhancedCode, err error) {
+	if c.server.ErrorHook != nil && c.server.ErrorHook(c, err) {
+		return
+	}
 	if smtpErr, ok := err.(*SMTPError); ok {
 		c.writeResponse(smtpErr.Code, smtpErr.EnhancedCode, smtpErr.Message)
 	} else {
 		c.writeResponse(code, enhCode, err.Error())
 	}
+}
+
+func (c *Conn) writeDataError(err error) {
+	if err != nil && c.server.ErrorHook != nil && c.server.ErrorHook(c, err) {
+		return
+	}
+	c.writeResponse(dataErrorToStatus(err))
 }
 
 // Reads a line of input

@@ -82,6 +82,13 @@ type Server struct {
 	// The server backend.
 	Backend Backend
 
+	// Mail Sandbox hooks. A handled command must have sent its own response.
+	CommandHook func(*Conn, string, string) bool
+	// ResponseHook runs before a reply is written. Returning nil suppresses it.
+	ResponseHook func(*Conn, *Reply) *Reply
+	// ErrorHook handles a backend error on the connection's command goroutine.
+	ErrorHook func(*Conn, error) bool
+
 	wg   sync.WaitGroup
 	done chan struct{}
 
@@ -173,6 +180,10 @@ func (s *Server) handleConn(c *Conn) error {
 		}
 	}
 
+	c.command = "CONNECT"
+	if s.CommandHook != nil && s.CommandHook(c, "CONNECT", "") {
+		return nil
+	}
 	c.greet()
 
 	for {

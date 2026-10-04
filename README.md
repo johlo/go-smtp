@@ -1,5 +1,28 @@
 # go-smtp
 
+## Mail Sandbox fork
+
+This public fork of [emersion/go-smtp](https://github.com/emersion/go-smtp)
+is based on **v0.25.0**. The `mail-sandbox` branch adds server hooks used by
+[Mail Sandbox](https://github.com/johlo/mail-sandbox) for protocol fault injection.
+The upstream client, server, tests and MIT license are retained.
+
+- `Server.CommandHook` runs before command handling, including `CONNECT` after
+  implicit TLS negotiation. Return true when the hook has handled the reply.
+  Handled CONNECT/BDAT commands close the connection; BDAT may have pipelined data.
+- `Server.ResponseHook` can replace a reply or return nil to suppress it.
+- `Server.ErrorHook` handles backend errors on the command goroutine, including
+  SMTP DATA and BDAT errors, avoiding concurrent response writes from a worker.
+- `Conn.Command()`, `Conn.HookData`, `Reply` and `Conn.WriteReply` support those
+  hooks. `WriteReply` bypasses `ResponseHook` to prevent recursive interception.
+
+Hooks are optional; configure them before serving connections. Normal behavior
+is preserved when they are nil. No sandbox-specific fault registry is included.
+
+The module path remains `github.com/emersion/go-smtp`. Consumers select this
+fork with a version-pinned Go `replace` directive; Mail Sandbox's `go.mod` records
+its exact revision. Run `go test -race ./...` and `go vet ./...` when updating.
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/emersion/go-smtp.svg)](https://pkg.go.dev/github.com/emersion/go-smtp)
 
 An ESMTP client and server library written in Go.
