@@ -91,6 +91,7 @@ func (c *Conn) init() {
 
 // Commands are dispatched to the appropriate handler functions.
 func (c *Conn) handle(cmd string, arg string) {
+	defer func() { c.command, c.HookData = "", nil }()
 	// If panic happens during command handling - send 421 response
 	// and close connection.
 	defer func() {
@@ -110,13 +111,14 @@ func (c *Conn) handle(cmd string, arg string) {
 
 	cmd = strings.ToUpper(cmd)
 	c.command = cmd
-	if c.server.CommandHook != nil && c.server.CommandHook(c, cmd, arg) {
-		// BDAT payload may already be pipelined. Closing avoids interpreting it
-		// as commands after an injected rejection.
-		if cmd == "BDAT" {
-			c.Close()
+	if c.server.CommandHook != nil {
+		if err := c.server.CommandHook(c, cmd, arg); err != nil {
+			c.writeError(451, EnhancedCode{4, 0, 0}, err)
+			if cmd == "BDAT" {
+				c.discardRejectedChunk(arg)
+			}
+			return
 		}
-		return
 	}
 	switch cmd {
 	case "SEND", "SOML", "SAML", "EXPN", "HELP", "TURN":
@@ -999,7 +1001,7 @@ func (c *Conn) handleData(arg string) {
 	err := c.Session().Data(r)
 	r.limited = false
 	io.Copy(ioutil.Discard, r) // Make sure all the data has been consumed
-	c.writeDataError(err)
+	c.writeReply(dataErrorReply(err))
 }
 
 func (c *Conn) handleBdat(arg string) {
@@ -1093,7 +1095,7 @@ func (c *Conn) handleBdat(arg string) {
 		// the whole chunk.
 		io.Copy(ioutil.Discard, chunk)
 
-		c.writeDataError(err)
+		c.writeReply(dataErrorReply(err))
 
 		if err == errPanic {
 			c.Close()
@@ -1116,11 +1118,14 @@ func (c *Conn) handleBdat(arg string) {
 		if c.server.LMTP {
 			c.bdatStatus.fillRemaining(err)
 			for i, rcpt := range c.recipients {
-				code, enchCode, msg := dataErrorToStatus(<-c.bdatStatus.status[i])
-				c.writeResponse(code, enchCode, "<"+rcpt+"> "+msg)
+				reply := dataErrorReply(<-c.bdatStatus.status[i])
+				if reply != nil {
+					reply.Lines[0] = "<" + rcpt + "> " + reply.Lines[0]
+				}
+				c.writeReply(reply)
 			}
 		} else {
-			c.writeDataError(err)
+			c.writeReply(dataErrorReply(err))
 		}
 
 		if err == errPanic {
@@ -1255,8 +1260,11 @@ func (c *Conn) handleDataLMTP() {
 	}
 
 	for i, rcpt := range c.recipients {
-		code, enchCode, msg := dataErrorToStatus(<-status.status[i])
-		c.writeResponse(code, enchCode, "<"+rcpt+"> "+msg)
+		reply := dataErrorReply(<-status.status[i])
+		if reply != nil {
+			reply.Lines[0] = "<" + rcpt + "> " + reply.Lines[0]
+		}
+		c.writeReply(reply)
 	}
 
 	// If done gets false, the panic occurred in LMTPData and the connection
@@ -1292,7 +1300,13 @@ func (c *Conn) greet() {
 }
 
 func (c *Conn) writeResponse(code int, enhCode EnhancedCode, text ...string) {
-	reply := &Reply{Code: code, EnhancedCode: enhCode, Lines: text}
+	c.writeReply(&Reply{Code: code, EnhancedCode: enhCode, Lines: text})
+}
+
+func (c *Conn) writeReply(reply *Reply) {
+	if reply == nil {
+		return
+	}
 	if c.server.ResponseHook != nil {
 		reply = c.server.ResponseHook(c, reply)
 	}
@@ -1303,12 +1317,14 @@ func (c *Conn) writeResponse(code int, enhCode EnhancedCode, text ...string) {
 
 // Reply is a complete SMTP response before wire encoding.
 type Reply struct {
+	// Err is the backend error behind this reply, if any. It is not encoded.
+	Err          error
 	Code         int
 	EnhancedCode EnhancedCode
 	Lines        []string
 }
 
-// Command is the command currently being handled, or CONNECT for the greeting.
+// Command is the current command, or an empty string between commands and during the greeting.
 func (c *Conn) Command() string { return c.command }
 
 // WriteReply writes a reply without invoking ResponseHook again.
@@ -1346,21 +1362,23 @@ func (c *Conn) WriteReply(reply *Reply) {
 }
 
 func (c *Conn) writeError(code int, enhCode EnhancedCode, err error) {
-	if c.server.ErrorHook != nil && c.server.ErrorHook(c, err) {
+	if errors.Is(err, ErrResponseHandled) {
 		return
 	}
-	if smtpErr, ok := err.(*SMTPError); ok {
-		c.writeResponse(smtpErr.Code, smtpErr.EnhancedCode, smtpErr.Message)
-	} else {
-		c.writeResponse(code, enhCode, err.Error())
+	reply := &Reply{Code: code, EnhancedCode: enhCode, Lines: []string{err.Error()}, Err: err}
+	var smtpErr *SMTPError
+	if errors.As(err, &smtpErr) {
+		reply.Code, reply.EnhancedCode, reply.Lines = smtpErr.Code, smtpErr.EnhancedCode, []string{smtpErr.Message}
 	}
+	c.writeReply(reply)
 }
 
-func (c *Conn) writeDataError(err error) {
-	if err != nil && c.server.ErrorHook != nil && c.server.ErrorHook(c, err) {
-		return
+func dataErrorReply(err error) *Reply {
+	if errors.Is(err, ErrResponseHandled) {
+		return nil
 	}
-	c.writeResponse(dataErrorToStatus(err))
+	code, enhanced, message := dataErrorToStatus(err)
+	return &Reply{Code: code, EnhancedCode: enhanced, Lines: []string{message}, Err: err}
 }
 
 // Reads a line of input

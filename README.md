@@ -7,14 +7,25 @@ is based on **v0.25.0**. The `mailarky` branch adds server hooks used by
 [Mailarky](https://github.com/johlo/mailarky) for protocol fault injection.
 The upstream client, server, tests and MIT license are retained.
 
-- `Server.CommandHook` runs before command handling, including `CONNECT` after
-  implicit TLS negotiation. Return true when the hook has handled the reply.
-  Handled CONNECT/BDAT commands close the connection; BDAT may have pipelined data.
-- `Server.ResponseHook` can replace a reply or return nil to suppress it.
-- `Server.ErrorHook` handles backend errors on the command goroutine, including
-  SMTP DATA and BDAT errors, avoiding concurrent response writes from a worker.
-- `Conn.Command()`, `Conn.HookData`, `Reply` and `Conn.WriteReply` support those
-  hooks. `WriteReply` bypasses `ResponseHook` to prevent recursive interception.
+- `Server.GreetingHook` runs after implicit TLS negotiation, before the banner.
+  `Conn.Command()` is empty here. Returning `ErrResponseHandled` suppresses the
+  normal banner and keeps the connection open; `Conn.Disconnect(reply)` sends
+  an optional reply, closes, and returns that sentinel. Other errors reject
+  the connection with an error reply.
+- `Server.CommandHook` runs before a parsed command. Return nil to continue,
+  an error for a rejection, or `ErrResponseHandled` after sending a custom reply.
+  Rejected BDAT chunks are drained and the transaction is reset so the client
+  can retry. An invalid chunk size or a failed drain closes the connection.
+  Commands rejected by the line parser do not reach this hook.
+- `Server.ResponseHook` may edit or replace a reply, or return nil to suppress it.
+  `Reply.Err` carries the original backend error, including SMTP DATA/BDAT and
+  each LMTP recipient's result. The hook runs on the connection goroutine.
+- `Conn.Command()` and `Conn.HookData` last only for the current command and
+  are cleared before reading another command. Greeting metadata is cleared
+  before the first command.
+- `Conn.WriteReply` and `Conn.WriteRaw` bypass ResponseHook. Raw writes use the
+  protocol writer and honor WriteTimeout; call them from hooks, not concurrent
+  backend workers. `Conn.Disconnect(nil)` closes without a reply.
 
 Hooks are optional; configure them before serving connections. Normal behavior
 is preserved when they are nil. No sandbox-specific fault registry is included.

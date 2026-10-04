@@ -82,12 +82,17 @@ type Server struct {
 	// The server backend.
 	Backend Backend
 
-	// Mailarky hooks. A handled command must have sent its own response.
-	CommandHook func(*Conn, string, string) bool
-	// ResponseHook runs before a reply is written. Returning nil suppresses it.
+	// Optional protocol hooks. Configure them before serving connections.
+	// GreetingHook runs after implicit TLS negotiation, before the banner.
+	// ErrResponseHandled suppresses the banner and keeps the connection open;
+	// use Conn.Disconnect to close it. Any other error rejects the connection.
+	GreetingHook func(*Conn) error
+	// CommandHook runs before command handling. ErrResponseHandled skips the
+	// handler; any other error becomes a reply. A rejected BDAT chunk is drained.
+	CommandHook func(*Conn, string, string) error
+	// ResponseHook may edit or replace a reply, or return nil to suppress it.
+	// Reply.Err exposes backend errors, including each LMTP recipient's result.
 	ResponseHook func(*Conn, *Reply) *Reply
-	// ErrorHook handles a backend error on the connection's command goroutine.
-	ErrorHook func(*Conn, error) bool
 
 	wg   sync.WaitGroup
 	done chan struct{}
@@ -180,11 +185,17 @@ func (s *Server) handleConn(c *Conn) error {
 		}
 	}
 
-	c.command = "CONNECT"
-	if s.CommandHook != nil && s.CommandHook(c, "CONNECT", "") {
+	var greetingErr error
+	if s.GreetingHook != nil {
+		greetingErr = s.GreetingHook(c)
+	}
+	if greetingErr == nil {
+		c.greet()
+	} else if !errors.Is(greetingErr, ErrResponseHandled) {
+		c.writeError(421, EnhancedCode{4, 0, 0}, greetingErr)
 		return nil
 	}
-	c.greet()
+	c.HookData = nil
 
 	for {
 		line, err := c.readLine()
