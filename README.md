@@ -19,11 +19,11 @@ The upstream client, server, tests and MIT license are retained.
 Hooks are optional; configure them before serving connections. Normal behavior
 is preserved when they are nil. No sandbox-specific fault registry is included.
 
-The module path remains `github.com/emersion/go-smtp`. Consumers select this
-fork with a version-pinned Go `replace` directive; Mailarky's `go.mod` records
-its exact revision. Run `go test -race ./...` and `go vet ./...` when updating.
+The module path is `github.com/johlo/go-smtp`. Consumers import this fork
+directly and pin a revision with `go get`; no `replace` directive is needed.
+Run `go test -race ./...` and `go vet ./...` when updating.
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/emersion/go-smtp.svg)](https://pkg.go.dev/github.com/emersion/go-smtp)
+[![Go Reference](https://pkg.go.dev/badge/github.com/johlo/go-smtp.svg)](https://pkg.go.dev/github.com/johlo/go-smtp)
 
 An ESMTP client and server library written in Go.
 

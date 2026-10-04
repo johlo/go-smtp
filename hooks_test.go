@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emersion/go-smtp"
+	"github.com/johlo/go-smtp"
 )
 
 func hookSMTPConn(t *testing.T, s *smtp.Server) (*textproto.Conn, func()) {
