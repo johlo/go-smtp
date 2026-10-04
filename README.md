@@ -1,10 +1,10 @@
 # go-smtp
 
-## Mail Sandbox fork
+## Mailarky fork
 
 This public fork of [emersion/go-smtp](https://github.com/emersion/go-smtp)
-is based on **v0.25.0**. The `mail-sandbox` branch adds server hooks used by
-[Mail Sandbox](https://github.com/johlo/mail-sandbox) for protocol fault injection.
+is based on **v0.25.0**. The `mailarky` branch adds server hooks used by
+[Mailarky](https://github.com/johlo/mailarky) for protocol fault injection.
 The upstream client, server, tests and MIT license are retained.
 
 - `Server.CommandHook` runs before command handling, including `CONNECT` after
@@ -20,7 +20,7 @@ Hooks are optional; configure them before serving connections. Normal behavior
 is preserved when they are nil. No sandbox-specific fault registry is included.
 
 The module path remains `github.com/emersion/go-smtp`. Consumers select this
-fork with a version-pinned Go `replace` directive; Mail Sandbox's `go.mod` records
+fork with a version-pinned Go `replace` directive; Mailarky's `go.mod` records
 its exact revision. Run `go test -race ./...` and `go vet ./...` when updating.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/emersion/go-smtp.svg)](https://pkg.go.dev/github.com/emersion/go-smtp)

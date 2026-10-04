@@ -82,7 +82,7 @@ type Server struct {
 	// The server backend.
 	Backend Backend
 
-	// Mail Sandbox hooks. A handled command must have sent its own response.
+	// Mailarky hooks. A handled command must have sent its own response.
 	CommandHook func(*Conn, string, string) bool
 	// ResponseHook runs before a reply is written. Returning nil suppresses it.
 	ResponseHook func(*Conn, *Reply) *Reply
