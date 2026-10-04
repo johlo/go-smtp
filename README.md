@@ -3,7 +3,7 @@
 ## Mailarky fork
 
 This public fork of [emersion/go-smtp](https://github.com/emersion/go-smtp)
-is based on **v0.25.0**. The `mailarky` branch adds server hooks used by
+is based on **v0.25.0**. The `smtp-protocol-hooks` branch adds server hooks used by
 [Mailarky](https://github.com/johlo/mailarky) for protocol fault injection.
 The upstream client, server, tests and MIT license are retained.
 
